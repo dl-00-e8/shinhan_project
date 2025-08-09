@@ -11,14 +11,15 @@ import Combine
 class TransferViewModel: ObservableObject {
     @Published var inputText = ""
     @Published var recognizedText = ""
-    @Published var isRecognizing = false
+    @Published var isProcessing = false
     @Published var showAuthError = false
     @Published var showingConfirmation = false
-    @Published var transferRequest: TransferRequest?
+    @Published var transferResult: TransferResult?
+    @Published var errorMessage: String?
     
     private let speechService = SpeechRecognitionService()
-    private let voiceAuthService = VoiceAuthenticationService()
-    private let parsingService = TransferParsingService()
+    private let audioService = AudioService()
+    private let bankingService = BankingService()
     private var cancellables = Set<AnyCancellable>()
     
     init() {
@@ -27,15 +28,11 @@ class TransferViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: \.recognizedText, on: self)
             .store(in: &cancellables)
-        
-        speechService.$isRecognizing
-            .receive(on: DispatchQueue.main)
-            .assign(to: \.isRecognizing, on: self)
-            .store(in: &cancellables)
     }
     
     func startSpeechRecognition() {
         showAuthError = false
+        errorMessage = nil
         speechService.recognizeSpeech()
     }
     
@@ -50,38 +47,50 @@ class TransferViewModel: ObservableObject {
         inputText = ""
         recognizedText = ""
         showAuthError = false
+        errorMessage = nil
+        transferResult = nil
         speechService.recognizedText = ""
     }
     
-    func processTransfer() {
-        // 이체 정보 파싱
-        if let request = parsingService.parseTransferInfo(from: recognizedText) {
-            // 성문 인증 (받아쓰기에서는 생략하거나 다른 방식 사용)
-            Task {
-                // 임시로 항상 인증 성공으로 처리
-                let isAuthenticated = await authenticateUser()
+    func processVoiceTransfer() async {
+        guard !recognizedText.isEmpty else {
+            await MainActor.run {
+                self.errorMessage = "음성 입력이 필요합니다."
+            }
+            return
+        }
+        
+        await MainActor.run {
+            self.isProcessing = true
+            self.errorMessage = nil
+            self.transferResult = nil
+        }
+        
+        do {
+            // 더미 오디오 데이터 생성 (실제로는 audioService.getAudioData() 사용)
+            let dummyAudioData = Data([0x00, 0x01, 0x02, 0x03]) // 실제 구현시 제거
+            
+            let result = try await bankingService.executeVoiceTransfer(
+                audioData: dummyAudioData,
+                text: recognizedText
+            )
+            
+            await MainActor.run {
+                self.isProcessing = false
+                self.transferResult = result
                 
-                await MainActor.run {
-                    if isAuthenticated {
-                        self.transferRequest = request
-                        self.showingConfirmation = true
-                    } else {
-                        self.showAuthError = true
-                    }
+                if result.isSuccess {
+                    self.showingConfirmation = true
+                } else {
+                    self.errorMessage = result.message
                 }
             }
-        } else {
-            // 파싱 실패 시 오류 표시
-            showAuthError = true
+            
+        } catch {
+            await MainActor.run {
+                self.isProcessing = false
+                self.errorMessage = error.localizedDescription
+            }
         }
-    }
-    
-    private func authenticateUser() async -> Bool {
-        // 실제 구현에서는 다양한 인증 방식 사용
-        // 예: PIN, 생체인증, 디바이스 잠금 상태 확인 등
-        
-        // 임시로 1초 대기 후 성공 반환
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        return true
     }
 }

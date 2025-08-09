@@ -15,16 +15,10 @@ struct TransferConfirmationView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                // 헤더
                 headerView
-                
-                // 이체 정보
                 transferInfoView
-                
-                // 버튼들
                 buttonView
                 
-                // 처리 상태
                 if viewModel.isProcessing {
                     processingView
                 }
@@ -54,29 +48,16 @@ struct TransferConfirmationView: View {
     
     private var transferInfoView: some View {
         VStack(spacing: 12) {
-            // 받는 사람
             infoRow(title: "받는 사람", value: transferRequest.recipientName, icon: "person.fill")
-            
             Divider()
-            
-            // 이체 금액
             infoRow(title: "이체 금액", value: formattedAmount, icon: "won.sign.circle.fill")
-            
             Divider()
-            
-            // 보내는 계좌
-            infoRow(title: "보내는 계좌", value: transferRequest.fromAccount, icon: "creditcard.fill")
+            infoRow(title: "보내는 계좌", value: transferRequest.fromAccount ?? "기본 계좌", icon: "creditcard.fill")
             
             if let memo = transferRequest.memo, !memo.isEmpty {
                 Divider()
                 infoRow(title: "메모", value: memo, icon: "text.bubble.fill")
             }
-            
-            // 인증 점수 (개발용)
-            #if DEBUG
-            Divider()
-            infoRow(title: "인증 점수", value: String(format: "%.2f", transferRequest.voiceAuthenticationScore), icon: "checkmark.shield.fill")
-            #endif
         }
         .padding()
         .background(Color.gray.opacity(0.15))
@@ -106,9 +87,10 @@ struct TransferConfirmationView: View {
     
     private var buttonView: some View {
         VStack(spacing: 12) {
-            // 이체 실행 버튼
             Button(action: {
-                viewModel.executeTransfer(transferRequest)
+                Task {
+                    await viewModel.executeVoiceTransfer(with: transferRequest.recipientName + " " + String(transferRequest.amount) + "원")
+                }
             }) {
                 HStack {
                     Image(systemName: "arrow.right.circle.fill")
@@ -125,7 +107,6 @@ struct TransferConfirmationView: View {
             .buttonStyle(PlainButtonStyle())
             .disabled(viewModel.isProcessing)
             
-            // 취소 버튼
             Button("취소") {
                 dismiss()
             }
@@ -146,19 +127,37 @@ struct TransferConfirmationView: View {
     
     private func resultView(result: TransferResult) -> some View {
         VStack(spacing: 12) {
-            Image(systemName: result.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .font(.system(size: 32))
-                .foregroundColor(result.isSuccess ? .green : .red)
-            
-            Text(result.isSuccess ? "이체 완료" : "이체 실패")
-                .font(.headline)
-                .fontWeight(.semibold)
-            
-            Text(result.message)
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
-            
+            resultIcon(isSuccess: result.isSuccess)
+            resultTitle(isSuccess: result.isSuccess)
+            resultMessage(result.message)
+            resultButtons(result: result)
+        }
+        .padding()
+        .background(Color.gray.opacity(0.15))
+        .cornerRadius(12)
+    }
+    
+    private func resultIcon(isSuccess: Bool) -> some View {
+        Image(systemName: isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
+            .font(.system(size: 32))
+            .foregroundColor(isSuccess ? .green : .red)
+    }
+    
+    private func resultTitle(isSuccess: Bool) -> some View {
+        Text(isSuccess ? "이체 완료" : "이체 실패")
+            .font(.headline)
+            .fontWeight(.semibold)
+    }
+    
+    private func resultMessage(_ message: String?) -> some View {
+        Text(message ?? "처리가 완료되었습니다.")
+            .font(.body)
+            .multilineTextAlignment(.center)
+            .foregroundColor(.secondary)
+    }
+    
+    private func resultButtons(result: TransferResult) -> some View {
+        Group {
             if result.isSuccess {
                 Button("확인") {
                     dismiss()
@@ -168,7 +167,9 @@ struct TransferConfirmationView: View {
             } else {
                 HStack {
                     Button("다시 시도") {
-                        viewModel.executeTransfer(transferRequest)
+                        Task {
+                            await viewModel.executeVoiceTransfer(with: transferRequest.recipientName + " " + String(transferRequest.amount) + "원")
+                        }
                     }
                     .buttonStyle(.bordered)
                     
@@ -180,9 +181,6 @@ struct TransferConfirmationView: View {
                 .padding(.top)
             }
         }
-        .padding()
-        .background(Color.gray.opacity(0.15))
-        .cornerRadius(12)
     }
     
     private var formattedAmount: String {

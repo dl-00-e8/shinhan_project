@@ -15,8 +15,21 @@ class AudioService: NSObject, ObservableObject {
     @Published var isRecording = false
     @Published var recordingURL: URL?
     
+    override init() {
+        super.init()
+        setupAudioSession()
+    }
+    
+    private func setupAudioSession() {
+        do {
+            try audioSession.setCategory(.playAndRecord, mode: .default)
+            try audioSession.setActive(true)
+        } catch {
+            print("오디오 세션 설정 실패: \(error.localizedDescription)")
+        }
+    }
+    
     func startRecording() {
-        // 권한 확인 및 녹음 시작
         requestMicrophonePermission { [weak self] granted in
             if granted {
                 self?.beginRecording()
@@ -29,6 +42,11 @@ class AudioService: NSObject, ObservableObject {
         isRecording = false
     }
     
+    func getAudioData() -> Data? {
+        guard let url = recordingURL else { return nil }
+        return try? Data(contentsOf: url)
+    }
+    
     private func requestMicrophonePermission(completion: @escaping (Bool) -> Void) {
         audioSession.requestRecordPermission { granted in
             DispatchQueue.main.async {
@@ -38,6 +56,31 @@ class AudioService: NSObject, ObservableObject {
     }
     
     private func beginRecording() {
-        // 녹음 설정 및 시작 로직
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let audioFilename = documentsPath.appendingPathComponent("recording.m4a")
+        
+        let settings = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 12000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        
+        do {
+            audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
+            audioRecorder?.delegate = self
+            audioRecorder?.record()
+            
+            recordingURL = audioFilename
+            isRecording = true
+        } catch {
+            print("녹음 시작 실패: \(error.localizedDescription)")
+        }
+    }
+}
+
+extension AudioService: AVAudioRecorderDelegate {
+    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        isRecording = false
     }
 }
