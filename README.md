@@ -38,18 +38,19 @@ Apple Watch용 신한은행 애플리케이션에서 음성 인식과 성문 인
 
 ## 주요 동작 이미지
 
-![로딩뷰](docs/images/loading_view.png)  
+<div style="white-space: nowrap; overflow-x: auto; margin-bottom: 12px;">
+  <img src="docs/images/loading_view.png" width="200" style="display: inline-block; margin-right: 8px;" />
+  <img src="docs/images/my_account_list.png" width="200" style="display: inline-block; margin-right: 8px;" />
+  <img src="docs/images/my_account_list2.png" width="200" style="display: inline-block; margin-right: 8px;" />
+</div>
 
-![계좌1](docs/images/my_account_list.png)  
+<div style="white-space: nowrap; overflow-x: auto;">
+  <img src="docs/images/my_account_detail_list.png" width="200" style="display: inline-block; margin-right: 8px;" />
+  <img src="docs/images/my_account_detail_list2.png" width="200" style="display: inline-block; margin-right: 8px;" />
+  <img src="docs/images/voice_transaction.png" width="200" style="display: inline-block; margin-right: 8px;" />
+</div>
 
-![계좌2](docs/images/my_account_list2.png)  
-
-![계좌상세1](docs/images/my_account_detail_list.png)  
-
-![계좌상세2](docs/images/my_account_detail_list2.png)  
-
-![음성인식1](docs/images/voice_transaction.png)  
-
-![음성인식2](docs/images/voice_transaction_2.png)  
-
-![계좌이체](docs/images/transaction_data.png)  
+<div style="white-space: nowrap; overflow-x: auto; margin-top: 12px;">
+  <img src="docs/images/voice_transaction_2.png" width="200" style="display: inline-block; margin-right: 8px;" />
+  <img src="docs/images/transaction_data.png" width="200" style="display: inline-block; margin-right: 8px;" />
+</div>
