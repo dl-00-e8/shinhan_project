@@ -14,6 +14,53 @@ from functools import wraps
 from collections import defaultdict
 import uuid
 import threading
+from datetime import timezone
+
+
+# ========================= 유틸리티 함수 =========================
+
+def allowed_file(filename):
+    """허용된 파일 확장자 확인"""
+    ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'aac'}
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def format_currency(amount):
+    """금액 포맷팅"""
+    return f"{amount:,}원"
+
+def calculate_transfer_fee(amount):
+    """이체 수수료 계산"""
+    if amount <= 10000:
+        return 500
+    elif amount <= 100000:
+        return 1000
+    else:
+        return 1500
+
+def find_account_by_user_info(recipient_name):
+    """수취인 이름으로 계좌 찾기 (data_store는 나중에 정의됨)"""
+    # 이 함수는 data_store가 정의된 후에 사용됩니다
+    pass
+
+def mask_account_number(account_number):
+    """계좌번호 마스킹 처리"""
+    if len(account_number) >= 8:
+        return f"{account_number[:4]}****{account_number[-4:]}"
+    return account_number
+
+def get_account_type_name(account_type):
+    """계좌 타입 한글명 반환"""
+    type_names = {
+        'checking': '입출금',
+        'savings': '적금',
+        'deposit': '예금',
+        'loan': '대출'
+    }
+    return type_names.get(account_type, account_type)
+
+def utc_now():
+    """UTC 시간 반환 (deprecation 경고 방지)"""
+    return datetime.now(timezone.utc)
 
 
 # Flask 앱 초기화
@@ -61,7 +108,7 @@ class DataStore:
     
     def _init_test_data(self):
         """테스트용 초기 데이터 생성"""
-        # 테스트 사용자 1
+        # 테스트 사용자 1 - testuser1에 더 많은 테스트 데이터
         user1_id = self.create_user(
             username="testuser1",
             email="test1@example.com",
@@ -85,14 +132,82 @@ class DataStore:
             phone_number="010-5555-1234"
         )
         
-        # 계좌 생성
-        self.create_account(user1_id, "1234567890123456", "checking", 1000000)
-        self.create_account(user2_id, "2345678901234567", "savings", 500000)
-        self.create_account(user3_id, "3456789012345678", "checking", 750000)
+        # testuser1의 계좌들 (여러 개 계좌)
+        self.create_account(user1_id, "1234567890123456", "checking", 2500000)  # 주계좌
+        self.create_account(user1_id, "1234567890123457", "savings", 5000000)   # 적금
+        self.create_account(user1_id, "1234567890123458", "deposit", 10000000)  # 예금
+        
+        # 다른 사용자들 계좌
+        self.create_account(user2_id, "2345678901234567", "checking", 800000)
+        self.create_account(user3_id, "3456789012345678", "savings", 1200000)
+        
+        # testuser1의 거래 내역 생성
+        self._create_test_transactions(user1_id, user2_id, user3_id)
         
         logger.info("테스트 데이터 초기화 완료")
         logger.info(f"사용자 수: {len(self.users)}")
         logger.info(f"계좌 수: {len(self.accounts)}")
+        logger.info(f"거래 수: {len(self.transactions)}")
+    
+    def _create_test_transactions(self, user1_id, user2_id, user3_id):
+        """testuser1용 테스트 거래 내역 생성"""
+        user1_accounts = self.user_accounts[user1_id]
+        user2_accounts = self.user_accounts[user2_id]
+        user3_accounts = self.user_accounts[user3_id]
+        
+        if not all([user1_accounts, user2_accounts, user3_accounts]):
+            return
+        
+        # 완료된 거래들
+        transactions_data = [
+            # 김철수에게 송금 (어제)
+            {
+                'from': user1_accounts[0], 'to': user2_accounts[0],
+                'amount': 50000, 'desc': '김철수에게 송금',
+                'days_ago': 1, 'sender_id': user1_id, 'recipient_id': user2_id
+            },
+            # 홍길동에게 송금 (3일 전)
+            {
+                'from': user1_accounts[0], 'to': user3_accounts[0],
+                'amount': 100000, 'desc': '홍길동에게 송금',
+                'days_ago': 3, 'sender_id': user1_id, 'recipient_id': user3_id
+            },
+            # 김철수로부터 받은 돈 (5일 전)
+            {
+                'from': user2_accounts[0], 'to': user1_accounts[0],
+                'amount': 30000, 'desc': '김철수로부터 입금',
+                'days_ago': 5, 'sender_id': user2_id, 'recipient_id': user1_id
+            },
+            # 적금 계좌에서 주계좌로 이체 (7일 전)
+            {
+                'from': user1_accounts[1], 'to': user1_accounts[0],
+                'amount': 200000, 'desc': '적금에서 주계좌로 이체',
+                'days_ago': 7, 'sender_id': user1_id, 'recipient_id': user1_id
+            }
+        ]
+        
+        for tx_data in transactions_data:
+            created_at = datetime.utcnow() - timedelta(days=tx_data['days_ago'])
+            
+            tx_id = self.next_transaction_id
+            self.next_transaction_id += 1
+            
+            transaction = {
+                'id': tx_id,
+                'sender_id': tx_data['sender_id'],
+                'recipient_id': tx_data['recipient_id'],
+                'sender_account_id': tx_data['from'],
+                'recipient_account_id': tx_data['to'],
+                'amount': tx_data['amount'],
+                'fee': calculate_transfer_fee(tx_data['amount']),
+                'status': 'completed',
+                'transaction_type': 'transfer',
+                'description': tx_data['desc'],
+                'created_at': created_at,
+                'completed_at': created_at + timedelta(seconds=30)
+            }
+            
+            self.transactions[tx_id] = transaction
     
     def create_user(self, username, email, password_hash, phone_number):
         """사용자 생성"""
@@ -151,7 +266,7 @@ class DataStore:
                 'status': 'pending',
                 'transaction_type': 'voice_transfer',
                 'description': description,
-                'created_at': datetime.utcnow(),
+                'created_at': utc_now(),
                 'completed_at': None
             }
             
@@ -390,6 +505,92 @@ def mask_account_number(account_number):
         return f"{account_number[:4]}****{account_number[-4:]}"
     return account_number
 
+def get_account_type_name(account_type):
+    """계좌 타입 한글명 반환"""
+    type_names = {
+        'checking': '입출금',
+        'savings': '적금',
+        'deposit': '예금',
+        'loan': '대출'
+    }
+    return type_names.get(account_type, account_type)
+
+def format_account_for_swift(account, user):
+    """Swift Account 구조체 형식으로 계좌 정보 포맷팅"""
+    return {
+        'id': account['id'],
+        'accountNumber': account['account_number'],
+        'accountType': account['account_type'],
+        'accountTypeName': get_account_type_name(account['account_type']),
+        'balance': account['balance'],
+        'balanceFormatted': format_currency(account['balance']),
+        'ownerName': user['username'],
+        'bankName': '신한은행',
+        'bankCode': 'SH',
+        'maskedAccountNumber': mask_account_number(account['account_number']),
+        'isActive': account['is_active'],
+        'createdAt': account['created_at'].isoformat()
+    }
+
+def format_transaction_for_swift(transaction, user_id):
+    """Swift Transaction 구조체 형식으로 거래 정보 포맷팅"""
+    # 송금/입금 구분
+    is_outgoing = transaction['sender_id'] == user_id
+    
+    # 상대방 정보 조회
+    other_user_id = transaction['recipient_id'] if is_outgoing else transaction['sender_id']
+    other_user = data_store.users.get(other_user_id, {})
+    
+    return {
+        'id': transaction['id'],
+        'amount': transaction['amount'],
+        'amountFormatted': format_currency(transaction['amount']),
+        'fee': transaction['fee'],
+        'feeFormatted': format_currency(transaction['fee']),
+        'type': 'outgoing' if is_outgoing else 'incoming',
+        'typeName': '송금' if is_outgoing else '입금',
+        'otherPartyName': other_user.get('username', '알 수 없음'),
+        'description': transaction['description'],
+        'status': transaction['status'],
+        'statusName': {
+            'pending': '처리중',
+            'completed': '완료',
+            'failed': '실패'
+        }.get(transaction['status'], transaction['status']),
+        'transactionDate': transaction['created_at'].isoformat(),
+        'completedDate': transaction['completed_at'].isoformat() if transaction['completed_at'] else None,
+        'bankName': '신한은행'
+    }
+
+def create_transfer_result_for_swift(success, message, transaction_id=None):
+    """Swift TransferResult 구조체 형식으로 이체 결과 생성"""
+    result = {
+        'success': success,
+        'message': message,
+        'timestamp': datetime.utcnow().isoformat()
+    }
+    
+    if transaction_id:
+        result['transactionId'] = transaction_id
+        transaction = data_store.transactions.get(transaction_id)
+        if transaction:
+            result['amount'] = transaction['amount']
+            result['amountFormatted'] = format_currency(transaction['amount'])
+            result['fee'] = transaction['fee']
+            result['feeFormatted'] = format_currency(transaction['fee'])
+    
+    return result
+
+def parse_transfer_request_from_swift(data):
+    """Swift TransferRequest에서 이체 정보 파싱"""
+    return {
+        'recipient_name': data.get('recipientName'),
+        'amount': data.get('amount'),
+        'from_account': data.get('fromAccount'),
+        'memo': data.get('memo'),
+        'voice_authentication_score': data.get('voiceAuthenticationScore')
+    }
+
 # ========================= API 엔드포인트 =========================
 
 @app.route('/api/health', methods=['GET'])
@@ -420,14 +621,21 @@ def login():
             return jsonify({
                 'access_token': access_token,
                 'user_id': user['id'],
-                'username': user['username']
+                'username': user['username'],
+                'success': True
             })
         else:
-            return jsonify({'error': '인증에 실패했습니다.'}), 401
+            return jsonify({
+                'error': '인증에 실패했습니다.',
+                'success': False
+            }), 401
             
     except Exception as e:
         logger.error(f"로그인 오류: {str(e)}")
-        return jsonify({'error': '서버 오류가 발생했습니다.'}), 500
+        return jsonify({
+            'error': '서버 오류가 발생했습니다.',
+            'success': False
+        }), 500
 
 @app.route('/api/accounts', methods=['GET'])
 @jwt_required()
@@ -450,12 +658,90 @@ def get_accounts():
         
         return jsonify({
             'accounts': swift_accounts,
-            'count': len(swift_accounts)
+            'count': len(swift_accounts),
+            'success': True
         })
         
     except Exception as e:
         logger.error(f"계좌 목록 조회 오류: {str(e)}")
-        return jsonify({'error': '계좌 조회 중 오류가 발생했습니다.'}), 500
+        return jsonify({
+            'error': '계좌 조회 중 오류가 발생했습니다.',
+            'success': False
+        }), 500
+
+@app.route('/api/accounts/balance', methods=['GET'])
+@jwt_required()
+def get_account_balance():
+    """계좌 잔액 조회"""
+    try:
+        user_id = get_jwt_identity()
+        user = data_store.users.get(user_id)
+        
+        if not user:
+            return jsonify({'error': '사용자를 찾을 수 없습니다.'}), 404
+        
+        accounts = data_store.get_user_accounts(user_id)
+        
+        if not accounts:
+            return jsonify({'error': '계좌를 찾을 수 없습니다.'}), 404
+        
+        # 모든 계좌의 잔액 정보 반환
+        account_balances = []
+        total_balance = 0
+        
+        for account in accounts:
+            balance_info = {
+                'accountId': account['id'],
+                'accountNumber': mask_account_number(account['account_number']),
+                'accountType': get_account_type_name(account['account_type']),
+                'balance': account['balance'],
+                'balanceFormatted': format_currency(account['balance'])
+            }
+            account_balances.append(balance_info)
+            total_balance += account['balance']
+        
+        return jsonify({
+            'accountBalances': account_balances,
+            'totalBalance': total_balance,
+            'totalBalanceFormatted': format_currency(total_balance),
+            'success': True
+        })
+        
+    except Exception as e:
+        logger.error(f"잔액 조회 오류: {str(e)}")
+        return jsonify({
+            'error': '잔액 조회 중 오류가 발생했습니다.',
+            'success': False
+        }), 500
+
+@app.route('/api/transactions', methods=['GET'])
+@jwt_required()
+def get_transactions():
+    """사용자 거래 내역 조회"""
+    try:
+        user_id = get_jwt_identity()
+        limit = request.args.get('limit', type=int)
+        
+        transactions = data_store.get_user_transactions(user_id, limit)
+        
+        # Swift Transaction 형식으로 변환
+        swift_transactions = []
+        for transaction in transactions:
+            swift_transaction = format_transaction_for_swift(transaction, user_id)
+            swift_transactions.append(swift_transaction)
+        
+        return jsonify({
+            'transactions': swift_transactions,
+            'count': len(swift_transactions),
+            'success': True
+        })
+        
+    except Exception as e:
+        logger.error(f"거래 내역 조회 오류: {str(e)}")
+        return jsonify({
+            'error': '거래 내역 조회 중 오류가 발생했습니다.',
+            'success': False
+        }), 500
 
 @app.route('/api/transfer/voice', methods=['POST'])
 @jwt_required()
@@ -777,17 +1063,50 @@ def register_voice():
         logger.error(f"음성 등록 오류: {str(e)}")
         return jsonify({'error': '음성 등록 중 오류가 발생했습니다.'}), 500
 
+@app.route('/api/voice/status', methods=['GET'])
+@jwt_required()
+def voice_status():
+    """음성 프로필 등록 상태 확인"""
+    try:
+        user_id = get_jwt_identity()
+        voice_profile = data_store.get_voice_profile(user_id)
+        
+        if voice_profile and voice_profile['is_active']:
+            return jsonify({
+                'isRegistered': True,
+                'registeredAt': voice_profile['created_at'].isoformat(),
+                'lastUpdated': voice_profile['updated_at'].isoformat()
+            })
+        else:
+            return jsonify({
+                'isRegistered': False
+            })
+    
+    except Exception as e:
+        logger.error(f"음성 상태 확인 오류: {str(e)}")
+        return jsonify({'error': '음성 상태 확인 중 오류가 발생했습니다.'}), 500
+
 @app.route('/api/users/list', methods=['GET'])
 def list_users():
     """사용자 목록 조회 (테스트용)"""
     users_list = []
     for user in data_store.users.values():
         if user['is_active']:
+            accounts = data_store.get_user_accounts(user['id'])
+            account_info = []
+            for account in accounts:
+                account_info.append({
+                    'accountNumber': mask_account_number(account['account_number']),
+                    'accountType': get_account_type_name(account['account_type']),
+                    'balance': format_currency(account['balance'])
+                })
+            
             users_list.append({
                 'id': user['id'],
                 'username': user['username'],
                 'email': user['email'],
-                'phone_number': user['phone_number']
+                'phone_number': user['phone_number'],
+                'accounts': account_info
             })
     
     return jsonify({
@@ -795,26 +1114,77 @@ def list_users():
         'count': len(users_list)
     })
 
+@app.route('/api/test/create-sample-data', methods=['POST'])
+def create_sample_data():
+    """추가 테스트 데이터 생성 (개발용)"""
+    try:
+        # testuser1에 대한 추가 거래 생성
+        testuser1 = data_store.get_user_by_username('testuser1')
+        if not testuser1:
+            return jsonify({'error': 'testuser1을 찾을 수 없습니다.'}), 404
+        
+        user1_id = testuser1['id']
+        user1_accounts = data_store.get_user_accounts(user1_id)
+        
+        if not user1_accounts:
+            return jsonify({'error': 'testuser1의 계좌를 찾을 수 없습니다.'}), 404
+        
+        # 김철수와의 추가 거래
+        kim_user = data_store.get_user_by_username('김철수')
+        if kim_user:
+            kim_accounts = data_store.get_user_accounts(kim_user['id'])
+            if kim_accounts:
+                # 김철수에게 송금
+                tx_id = data_store.create_transaction(
+                    sender_id=user1_id,
+                    recipient_id=kim_user['id'],
+                    sender_account_id=user1_accounts[0]['id'],
+                    recipient_account_id=kim_accounts[0]['id'],
+                    amount=25000,
+                    fee=500,
+                    description='김철수에게 추가 송금'
+                )
+                data_store.update_transaction_status(tx_id, 'completed')
+        
+        return jsonify({
+            'success': True,
+            'message': '추가 테스트 데이터가 생성되었습니다.'
+        })
+    
+    except Exception as e:
+        logger.error(f"테스트 데이터 생성 오류: {str(e)}")
+        return jsonify({'error': '테스트 데이터 생성 중 오류가 발생했습니다.'}), 500
+
 if __name__ == '__main__':
     print("=== 신한은행 음성인식 이체 서비스 ===")
     print("테스트 사용자:")
     for user in data_store.users.values():
         accounts = data_store.get_user_accounts(user['id'])
-        account_info = ""
-        if accounts:
-            account = accounts[0]
-            account_info = f" | 계좌: {mask_account_number(account['account_number'])} | 잔액: {format_currency(account['balance'])}"
-        print(f"- {user['username']} ({user['email']}){account_info}")
+        print(f"- {user['username']} ({user['email']})")
+        for i, account in enumerate(accounts, 1):
+            print(f"  계좌{i}: {mask_account_number(account['account_number'])} ({get_account_type_name(account['account_type'])}) - {format_currency(account['balance'])}")
+    
+    print(f"\ntestuser1 거래 내역:")
+    testuser1 = data_store.get_user_by_username('testuser1')
+    if testuser1:
+        transactions = data_store.get_user_transactions(testuser1['id'], 5)
+        for tx in transactions:
+            tx_type = '송금' if tx['sender_id'] == testuser1['id'] else '입금'
+            print(f"  {tx['created_at'].strftime('%m/%d')} {tx_type} {format_currency(tx['amount'])} - {tx['description']}")
     
     print("\n사용 가능한 API 엔드포인트:")
     print("- POST /api/auth/login - 로그인")
     print("- GET  /api/health - 서버 상태 확인")
+    print("- GET  /api/accounts - 계좌 목록 조회")
     print("- GET  /api/accounts/balance - 계좌 잔액 조회")
+    print("- GET  /api/transactions - 거래 내역 조회")
     print("- POST /api/voice/register - 음성 프로필 등록")
-    print("- POST /api/transfer/voice-auth - 음성 인증 및 이체 정보 추출")
-    print("- POST /api/transfer/confirm - 이체 정보 확인")
+    print("- GET  /api/voice/status - 음성 등록 상태 확인")
+    print("- POST /api/transfer/voice - 음성 이체")
+    print("- POST /api/transfer - 일반 이체")
     print("- POST /api/transfer/execute - 이체 실행")
     print("- GET  /api/users/list - 사용자 목록 (테스트용)")
+    print("- POST /api/test/create-sample-data - 추가 테스트 데이터 생성")
     
     print(f"\n서버 시작중... http://127.0.0.1:8080")
     app.run(debug=True, host='0.0.0.0', port=8080)
