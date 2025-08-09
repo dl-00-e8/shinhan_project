@@ -77,6 +77,47 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 jwt = JWTManager(app)
 CORS(app)
 
+# JWT 에러 핸들러
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_payload):
+    logger.warning("만료된 JWT 토큰 접근 시도")
+    return jsonify({
+        'error': 'JWT 토큰이 만료되었습니다.',
+        'success': False
+    }), 401
+
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    logger.warning(f"유효하지 않은 JWT 토큰: {error}")
+    return jsonify({
+        'error': 'JWT 토큰이 유효하지 않습니다.',
+        'success': False
+    }), 422
+
+@jwt.unauthorized_loader
+def missing_token_callback(error):
+    logger.warning(f"JWT 토큰 누락: {error}")
+    return jsonify({
+        'error': 'JWT 토큰이 필요합니다.',
+        'success': False
+    }), 401
+
+@jwt.needs_fresh_token_loader
+def token_not_fresh_callback(jwt_header, jwt_payload):
+    logger.warning("Fresh 토큰 필요")
+    return jsonify({
+        'error': '새로운 토큰이 필요합니다.',
+        'success': False
+    }), 401
+
+@jwt.revoked_token_loader
+def revoked_token_callback(jwt_header, jwt_payload):
+    logger.warning("폐기된 JWT 토큰 접근 시도")
+    return jsonify({
+        'error': 'JWT 토큰이 폐기되었습니다.',
+        'success': False
+    }), 401
+
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -319,7 +360,7 @@ class DataStore:
             if transaction_id in self.transactions:
                 self.transactions[transaction_id]['status'] = status
                 if status == 'completed':
-                    self.transactions[transaction_id]['completed_at'] = datetime.utcnow()
+                    self.transactions[transaction_id]['completed_at'] = utc_now()
                 return True
             return False
     
@@ -329,8 +370,8 @@ class DataStore:
             self.voice_profiles[user_id] = {
                 'user_id': user_id,
                 'voice_features': voice_features,
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow(),
+                'created_at': utc_now(),
+                'updated_at': utc_now(),
                 'is_active': True
             }
     
@@ -470,25 +511,7 @@ class NLPService:
 voice_auth = VoiceAuthenticator()
 nlp_service = NLPService()
 
-# ========================= 유틸리티 함수 =========================
-
-def allowed_file(filename):
-    """허용된 파일 확장자 확인"""
-    ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'aac'}
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-def format_currency(amount):
-    """금액 포맷팅"""
-    return f"{amount:,}원"
-
-def calculate_transfer_fee(amount):
-    """이체 수수료 계산"""
-    if amount <= 10000:
-        return 500
-    elif amount <= 100000:
-        return 1000
-    else:
-        return 1500
+# ========================= 추가 유틸리티 함수 =========================
 
 def find_account_by_user_info(recipient_name):
     """수취인 이름으로 계좌 찾기"""
@@ -498,22 +521,6 @@ def find_account_by_user_info(recipient_name):
         if accounts:
             return accounts[0]  # 첫 번째 활성 계좌 반환
     return None
-
-def mask_account_number(account_number):
-    """계좌번호 마스킹 처리"""
-    if len(account_number) >= 8:
-        return f"{account_number[:4]}****{account_number[-4:]}"
-    return account_number
-
-def get_account_type_name(account_type):
-    """계좌 타입 한글명 반환"""
-    type_names = {
-        'checking': '입출금',
-        'savings': '적금',
-        'deposit': '예금',
-        'loan': '대출'
-    }
-    return type_names.get(account_type, account_type)
 
 def format_account_for_swift(account, user):
     """Swift Account 구조체 형식으로 계좌 정보 포맷팅"""
@@ -567,7 +574,7 @@ def create_transfer_result_for_swift(success, message, transaction_id=None):
     result = {
         'success': success,
         'message': message,
-        'timestamp': datetime.utcnow().isoformat()
+        'timestamp': utc_now().isoformat()
     }
     
     if transaction_id:
@@ -598,7 +605,7 @@ def health_check():
     """서버 상태 확인"""
     return jsonify({
         'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': utc_now().isoformat(),
         'version': '1.0.0',
         'users_count': len(data_store.users),
         'accounts_count': len(data_store.accounts),
@@ -613,11 +620,16 @@ def login():
         username = data.get('username')
         password = data.get('password')
         
+        logger.info(f"로그인 시도: {username}")
+        
         # 사용자 검색
         user = data_store.get_user_by_username(username)
         
         if user:  # 간단한 인증 (실제로는 bcrypt 등 사용)
-            access_token = create_access_token(identity=user['id'])
+            # JWT identity는 문자열로 변환
+            access_token = create_access_token(identity=str(user['id']))
+            logger.info(f"로그인 성공: {user['username']} (ID: {user['id']})")
+            
             return jsonify({
                 'access_token': access_token,
                 'user_id': user['id'],
@@ -625,6 +637,7 @@ def login():
                 'success': True
             })
         else:
+            logger.warning(f"로그인 실패: 사용자 '{username}' 찾을 수 없음")
             return jsonify({
                 'error': '인증에 실패했습니다.',
                 'success': False
@@ -642,13 +655,38 @@ def login():
 def get_accounts():
     """사용자 계좌 목록 조회 (Swift Account 형식)"""
     try:
-        user_id = get_jwt_identity()
+        # JWT 토큰에서 사용자 ID 추출 (문자열로 받아서 정수로 변환)
+        user_id_str = get_jwt_identity()
+        logger.info(f"JWT에서 추출된 사용자 ID (문자열): {user_id_str}")
+        
+        if user_id_str is None:
+            logger.error("JWT 토큰에서 사용자 ID를 추출할 수 없음")
+            return jsonify({
+                'error': 'JWT 토큰이 유효하지 않습니다.',
+                'success': False
+            }), 422
+        
+        try:
+            user_id = int(user_id_str)
+            logger.info(f"변환된 사용자 ID (정수): {user_id}")
+        except ValueError:
+            logger.error(f"사용자 ID를 정수로 변환할 수 없음: {user_id_str}")
+            return jsonify({
+                'error': 'JWT 토큰의 사용자 ID가 올바르지 않습니다.',
+                'success': False
+            }), 422
+        
         user = data_store.users.get(user_id)
         
         if not user:
-            return jsonify({'error': '사용자를 찾을 수 없습니다.'}), 404
+            logger.error(f"사용자를 찾을 수 없음: ID {user_id}")
+            return jsonify({
+                'error': '사용자를 찾을 수 없습니다.',
+                'success': False
+            }), 404
         
         accounts = data_store.get_user_accounts(user_id)
+        logger.info(f"사용자 {user['username']}의 계좌 {len(accounts)}개 조회")
         
         # Swift Account 형식으로 변환
         swift_accounts = []
@@ -664,6 +702,8 @@ def get_accounts():
         
     except Exception as e:
         logger.error(f"계좌 목록 조회 오류: {str(e)}")
+        import traceback
+        logger.error(f"오류 상세: {traceback.format_exc()}")
         return jsonify({
             'error': '계좌 조회 중 오류가 발생했습니다.',
             'success': False
@@ -674,7 +714,8 @@ def get_accounts():
 def get_account_balance():
     """계좌 잔액 조회"""
     try:
-        user_id = get_jwt_identity()
+        user_id_str = get_jwt_identity()
+        user_id = int(user_id_str)
         user = data_store.users.get(user_id)
         
         if not user:
@@ -719,7 +760,8 @@ def get_account_balance():
 def get_transactions():
     """사용자 거래 내역 조회"""
     try:
-        user_id = get_jwt_identity()
+        user_id_str = get_jwt_identity()
+        user_id = int(user_id_str)
         limit = request.args.get('limit', type=int)
         
         transactions = data_store.get_user_transactions(user_id, limit)
@@ -770,7 +812,7 @@ def voice_transfer():
             )), 400
         
         # 파일 저장
-        filename = secure_filename(f"{user_id}_{datetime.utcnow().timestamp()}_{audio_file.filename}")
+        filename = secure_filename(f"{user_id}_{utc_now().timestamp()}_{audio_file.filename}")
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         audio_file.save(file_path)
         
@@ -1035,7 +1077,7 @@ def register_voice():
             return jsonify({'error': '지원되지 않는 파일 형식입니다.'}), 400
         
         # 파일 저장
-        filename = secure_filename(f"voice_reg_{user_id}_{datetime.utcnow().timestamp()}_{audio_file.filename}")
+        filename = secure_filename(f"voice_reg_{user_id}_{utc_now().timestamp()}_{audio_file.filename}")
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         audio_file.save(file_path)
         
@@ -1086,8 +1128,41 @@ def voice_status():
         logger.error(f"음성 상태 확인 오류: {str(e)}")
         return jsonify({'error': '음성 상태 확인 중 오류가 발생했습니다.'}), 500
 
-@app.route('/api/users/list', methods=['GET'])
-def list_users():
+@app.route('/api/debug/token', methods=['GET'])
+@jwt_required()
+def debug_token():
+    """JWT 토큰 디버깅용 엔드포인트"""
+    try:
+        user_id_str = get_jwt_identity()
+        user_id = int(user_id_str) if user_id_str else None
+        user = data_store.users.get(user_id) if user_id else None
+        
+        return jsonify({
+            'user_id_str': user_id_str,
+            'user_id': user_id,
+            'user_exists': user is not None,
+            'username': user['username'] if user else None,
+            'token_valid': True,
+            'success': True
+        })
+    except Exception as e:
+        logger.error(f"토큰 디버깅 오류: {str(e)}")
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
+
+@app.route('/api/debug/headers', methods=['GET'])
+def debug_headers():
+    """요청 헤더 디버깅용 엔드포인트"""
+    headers = dict(request.headers)
+    logger.info(f"요청 헤더: {headers}")
+    
+    return jsonify({
+        'headers': headers,
+        'authorization': request.headers.get('Authorization'),
+        'success': True
+    })
     """사용자 목록 조회 (테스트용)"""
     users_list = []
     for user in data_store.users.values():
