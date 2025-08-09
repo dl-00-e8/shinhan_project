@@ -35,3 +35,21 @@ Apple Watch용 신한은행 애플리케이션에서 음성 인식과 성문 인
 6. 일치도가 임계치 이상일 경우, 동일 사용자로 간주하여 이체 로직이 진행된다.
 7. 이체 전 STT로 변환된 문장을 활용하 계좌 이체 대상과 금액을 추출하여 사용자에게 알린다.
 8. 사용자가 확인 버튼을 누르게 된다면, 이체를 진행하여 그 결과가 화면에 반영된다.
+
+## 주요 동작 이미지
+
+![로딩뷰](docs/images/loading_view.png)  
+
+![계좌1](docs/images/my_account_list.png)  
+
+![계좌2](docs/images/my_account_list2.png)  
+
+![계좌상세1](docs/images/my_account_detail_list.png)  
+
+![계좌상세2](docs/images/my_account_detail_list2.png)  
+
+![음성인식1](docs/images/voice_transaction.png)  
+
+![음성인식2](docs/images/voice_transaction_2.png)  
+
+![계좌이체](docs/images/transaction_data.png)  
